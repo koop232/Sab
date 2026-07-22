@@ -1,0 +1,314 @@
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "GalacticSpeedDashboard"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- Main Window
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 350, 0, 290)
+main.Position = UDim2.new(0.5,-175,0.5,-145)
+main.BackgroundColor3 = Color3.fromRGB(10,12,22)
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0,18)
+corner.Parent = main
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(90,120,255)
+stroke.Parent = main
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,50)
+title.BackgroundTransparency = 1
+title.Text = "🌌 GALACTIC SPEED"
+title.TextColor3 = Color3.fromRGB(255,255,255)
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 20
+title.Parent = main
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1,0,0,25)
+subtitle.Position = UDim2.new(0,0,0,35)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "CORE SYSTEM"
+subtitle.TextColor3 = Color3.fromRGB(130,140,180)
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextSize = 13
+subtitle.Parent = main
+
+-- Status Card
+local statusBox = Instance.new("Frame")
+statusBox.Size = UDim2.new(.85,0,0,45)
+statusBox.Position = UDim2.new(.075,0,0,75)
+statusBox.BackgroundColor3 = Color3.fromRGB(25,28,45)
+statusBox.Parent = main
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0,12)
+statusCorner.Parent = statusBox
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1,0,1,0)
+status.BackgroundTransparency = 1
+status.Text = "● STANDBY"
+status.TextColor3 = Color3.fromRGB(255,200,80)
+status.Font = Enum.Font.GothamBold
+status.TextSize = 16
+status.Parent = statusBox
+
+-- Speed Display
+local speed = Instance.new("TextLabel")
+speed.Size = UDim2.new(1,0,0,35)
+speed.Position = UDim2.new(0,0,0,130)
+speed.BackgroundTransparency = 1
+speed.Text = "🏃 SPEED DISPLAY  16.0"
+speed.TextColor3 = Color3.fromRGB(220,220,230)
+speed.Font = Enum.Font.GothamMedium
+speed.TextSize = 16
+speed.Parent = main
+
+-- Loading Bar Container
+local loadContainer = Instance.new("Frame")
+loadContainer.Size = UDim2.new(.8,0,0,20)
+loadContainer.Position = UDim2.new(.1,0,0,175)
+loadContainer.BackgroundColor3 = Color3.fromRGB(20,23,40)
+loadContainer.BorderSizePixel = 0
+loadContainer.Visible = false
+loadContainer.Parent = main
+
+local loadContainerCorner = Instance.new("UICorner")
+loadContainerCorner.CornerRadius = UDim.new(0,6)
+loadContainerCorner.Parent = loadContainer
+
+-- Loading Bar Fill
+local loadBar = Instance.new("Frame")
+loadBar.Size = UDim2.new(0,0,1,0)
+loadBar.BackgroundColor3 = Color3.fromRGB(90,120,255)
+loadBar.BorderSizePixel = 0
+loadBar.Parent = loadContainer
+
+local loadBarCorner = Instance.new("UICorner")
+loadBarCorner.CornerRadius = UDim.new(0,6)
+loadBarCorner.Parent = loadBar
+
+-- Loading Percentage Text
+local loadPercent = Instance.new("TextLabel")
+loadPercent.Size = UDim2.new(1,0,1,0)
+loadPercent.BackgroundTransparency = 1
+loadPercent.Text = "0%"
+loadPercent.TextColor3 = Color3.fromRGB(200,200,220)
+loadPercent.Font = Enum.Font.GothamBold
+loadPercent.TextSize = 12
+loadPercent.Parent = loadContainer
+
+-- Button
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(.8,0,0,45)
+button.Position = UDim2.new(.1,0,0,205)
+button.BackgroundColor3 = Color3.fromRGB(40,45,80)
+button.Text = "ACTIVATE"
+button.TextColor3 = Color3.fromRGB(255,255,255)
+button.Font = Enum.Font.GothamBold
+button.TextSize = 16
+button.Parent = main
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0,12)
+buttonCorner.Parent = button
+
+-- Loading Text
+local loadingText = Instance.new("TextLabel")
+loadingText.Size = UDim2.new(1,0,0,20)
+loadingText.Position = UDim2.new(0,0,0,260)
+loadingText.BackgroundTransparency = 1
+loadingText.Text = ""
+loadingText.TextColor3 = Color3.fromRGB(130,140,180)
+loadingText.Font = Enum.Font.Gotham
+loadingText.TextSize = 12
+loadingText.Visible = false
+loadingText.Parent = main
+
+-- Variables
+local active = false
+local isLoading = false
+local loadTween = nil
+
+-- Function to change speed with proper error handling
+local function changeSpeed(value)
+	local character = player.Character
+	if not character then
+		warn("No character found, waiting for respawn...")
+		character = player.CharacterAdded:Wait()
+	end
+	
+	local humanoid = character:WaitForChild("Humanoid", 5)
+	if humanoid then
+		humanoid.WalkSpeed = value
+		print("Speed changed to: " .. value)
+	else
+		warn("Humanoid not found!")
+	end
+end
+
+button.MouseButton1Click:Connect(function()
+	if isLoading then return end
+	
+	if not active then
+		-- START LOADING
+		active = true
+		isLoading = true
+		status.Text = "● EXECUTING"
+		status.TextColor3 = Color3.fromRGB(80,180,255)
+		button.Text = "LOADING..."
+		button.BackgroundColor3 = Color3.fromRGB(30,35,60)
+		
+		loadContainer.Visible = true
+		loadingText.Visible = true
+		loadingText.Text = "⚡ INITIALIZING SYSTEMS..."
+		loadBar.Size = UDim2.new(0,0,1,0)
+		loadPercent.Text = "0%"
+		
+		local connection
+		connection = game:GetService("RunService").Heartbeat:Connect(function()
+			if not isLoading then
+				connection:Disconnect()
+				return
+			end
+			local percent = math.floor(loadBar.Size.X.Scale * 100)
+			loadPercent.Text = percent .. "%"
+			
+			if percent < 30 then
+				loadingText.Text = "⚡ INITIALIZING SYSTEMS..."
+			elseif percent < 60 then
+				loadingText.Text = "🔧 CONFIGURING MODULES..."
+			elseif percent < 90 then
+				loadingText.Text = "🚀 CALIBRATING ENGINES..."
+			else
+				loadingText.Text = "✨ FINALIZING..."
+			end
+		end)
+		
+		loadTween = TweenService:Create(loadBar, TweenInfo.new(20, Enum.EasingStyle.Linear), {
+			Size = UDim2.new(1,0,1,0)
+		})
+		
+		loadTween:Play()
+		
+		loadTween.Completed:Connect(function()
+			if active then
+				isLoading = false
+				
+				-- CHANGE SPEED TO 50 AFTER 20s LOADING
+				changeSpeed(50)
+				
+				status.Text = "● ACTIVE"
+				status.TextColor3 = Color3.fromRGB(80,255,120)
+				speed.Text = "🏃 SPEED DISPLAY  50.0"
+				button.Text = "DISABLE"
+				button.BackgroundColor3 = Color3.fromRGB(40,45,80)
+				loadContainer.Visible = false
+				loadingText.Visible = false
+				
+				TweenService:Create(stroke, TweenInfo.new(.3), {
+					Color = Color3.fromRGB(80,255,120)
+				}):Play()
+				
+				connection:Disconnect()
+			end
+		end)
+		
+	else
+		-- DISABLE
+		if loadTween then
+			loadTween:Cancel()
+		end
+		
+		active = false
+		isLoading = false
+		
+		-- Reset speed to 16
+		changeSpeed(16)
+		
+		status.Text = "● STANDBY"
+		status.TextColor3 = Color3.fromRGB(255,200,80)
+		speed.Text = "🏃 SPEED DISPLAY  16.0"
+		button.Text = "ACTIVATE"
+		button.BackgroundColor3 = Color3.fromRGB(40,45,80)
+		loadContainer.Visible = false
+		loadingText.Visible = false
+		loadBar.Size = UDim2.new(0,0,1,0)
+		loadPercent.Text = "0%"
+		
+		TweenService:Create(stroke, TweenInfo.new(.3), {
+			Color = Color3.fromRGB(90,120,255)
+		}):Play()
+	end
+end)
+
+-- Button press animation
+button.MouseButton1Down:Connect(function()
+	TweenService:Create(button, TweenInfo.new(.1), {
+		Size = UDim2.new(.75,0,0,42)
+	}):Play()
+end)
+
+button.MouseButton1Up:Connect(function()
+	TweenService:Create(button, TweenInfo.new(.1), {
+		Size = UDim2.new(.8,0,0,45)
+	}):Play()
+end)
+
+-- Mobile + PC Drag
+local dragging = false
+local dragStart
+local startPos
+
+main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+		
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+main.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		input.Changed:Connect(function()
+			if dragging and input.UserInputState == Enum.UserInputState.Change then
+				local delta = input.Position - dragStart
+				main.Position = UDim2.new(
+					startPos.X.Scale,
+					startPos.X.Offset + delta.X,
+					startPos.Y.Scale,
+					startPos.Y.Offset + delta.Y
+				)
+			end
+		end)
+	end
+end)
+
+-- Fade in
+main.BackgroundTransparency = 1
+TweenService:Create(main, TweenInfo.new(.5), {
+	BackgroundTransparency = 0
+}):Play()
+
+-- Print confirmation that script loaded
+print("Galactic Speed Dashboard loaded! Click ACTIVATE to start.")
