@@ -325,12 +325,35 @@ local AnimalsShared = tryRequire("Shared/Animals")
 -- sync data discovery
 -- ============================================================
 
+-- Roblox quirk: type() reports "table" for Signals and other values, so
+-- use typeof() (only real plain tables return "table") and pcall every
+-- property probe. The old crash "Attempt to get Signal::Owner" came from
+-- probing a signal field as if it were a plot table.
+local function isPlainTable(v)
+    return typeof(v) == "table"
+end
+
+local function safeGet(t, key)
+    local ok, v = pcall(function() return t[key] end)
+    return ok and v or nil
+end
+
+local function safePairs(t)
+    local ok, f = pcall(pairs, t)
+    if ok then return f end
+    return function() return nil end
+end
+
+local function looksLikePlot(v)
+    if not isPlainTable(v) then return false end
+    return safeGet(v, "Owner") ~= nil
+        or safeGet(v, "AnimalList") ~= nil
+        or type(safeGet(v, "Get")) == "function"
+end
+
 local function validateSync(t)
-    if type(t) ~= "table" then return false end
-    for _, v in pairs(t) do
-        if type(v) == "table" and (v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function") then
-            return true
-        end
+    for _, v in safePairs(t) do
+        if looksLikePlot(v) then return true end
     end
     return false
 end
@@ -350,7 +373,7 @@ local function loadSyncDataStandard()
     if not mod then return nil end
 
     local ok, M = pcall(require, mod)
-    if not ok or type(M) ~= "table" then return nil end
+    if not ok or not isPlainTable(M) then return nil end
 
     if validateSync(M) then return M end
     for _, v in pairs(M) do
@@ -395,13 +418,13 @@ local function deepFindSyncData()
         checked = checked + 1
         if checked > 200 then break end
         local ok, M = pcall(require, mod)
-        if ok and type(M) == "table" then
+        if ok and isPlainTable(M) then
             if validateSync(M) then
                 return M, mod:GetFullName() .. " (module table)"
             end
-            for key, v in pairs(M) do
+            for key, v in safePairs(M) do
                 local keyStr = tostring(key)
-                if type(v) == "table" then
+                if isPlainTable(v) then
                     if validateSync(v) then
                         return v, mod:GetFullName() .. " ." .. keyStr
                     end
@@ -469,9 +492,9 @@ local function lookupAnimalInfo(idx)
 end
 
 local function countTraits(t)
-    if type(t) ~= "table" then return 0 end
+    if not isPlainTable(t) then return 0 end
     local n = 0
-    for _ in pairs(t) do
+    for _ in safePairs(t) do
         n = n + 1
     end
     return n
@@ -481,34 +504,40 @@ local function scanLocalAnimals(syncData)
     local found = {}
 
     local function visit(node, depth)
-        if depth > 2 or type(node) ~= "table" then return end
-        for _, v in pairs(node) do
-            if type(v) == "table" then
-                local looksLikePlot = v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function"
-                if looksLikePlot then
+        if depth > 2 or not isPlainTable(node) then return end
+        for _, v in safePairs(node) do
+            if isPlainTable(v) then
+                if looksLikePlot(v) then
                     local owner = getOwnerKey(v)
                     if isLocalOwner(owner) then
                         local animals = getAnimalList(v)
-                        if type(animals) == "table" then
-                            for slotKey, data in pairs(animals) do
-                                if type(data) == "table" then
-                                    local idx = data.Index or data.Type or data.Animal or data.Name or data.Id
-                                    if idx ~= nil then
+                        if isPlainTable(animals) then
+                            for slotKey, data in safePairs(animals) do
+                                if isPlainTable(data) then
+                                    local idx = safeGet(data, "Index")
+                                        or safeGet(data, "Type")
+                                        or safeGet(data, "Animal")
+                                        or safeGet(data, "Name")
+                                        or safeGet(data, "Id")
+                                    if type(idx) == "string" or type(idx) == "number" then
                                         local info = lookupAnimalInfo(idx)
-                                        local displayName = (info and info.DisplayName) or idx
+                                        local dn = info and safeGet(info, "DisplayName")
+                                        local displayName = (type(dn) == "string") and dn or idx
                                         local genVal = 0
-                                        if AnimalsShared and type(AnimalsShared.GetGeneration) == "function" then
+                                        if AnimalsShared and type(safeGet(AnimalsShared, "GetGeneration")) == "function" then
                                             pcall(function()
-                                                genVal = AnimalsShared:GetGeneration(idx, data.Mutation, data.Traits, nil)
+                                                genVal = AnimalsShared:GetGeneration(idx, safeGet(data, "Mutation"), safeGet(data, "Traits"), nil)
                                             end)
                                         end
+                                        local sk = tonumber(slotKey)
+                                        if sk == nil and type(slotKey) ~= "string" then sk = 0 end
                                         table.insert(found, {
-                                            slotKey = tonumber(slotKey) or slotKey,
+                                            slotKey = sk,
                                             data = data,
                                             index = idx,
                                             displayName = displayName,
-                                            mutation = data.Mutation or "None",
-                                            traitsCount = countTraits(data.Traits),
+                                            mutation = safeGet(data, "Mutation") or "None",
+                                            traitsCount = countTraits(safeGet(data, "Traits")),
                                             genVal = genVal,
                                         })
                                     end
