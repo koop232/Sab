@@ -52,7 +52,7 @@ local CONFIG = {
     RemoteLoaderUrl = "https://ayhedtqtozxllxqvgnou.supabase.co/functions/v1/serve-script?id=moe0n2b1y1bdif&token=030d9d22e0364240",
 
     -- discord
-    Webhook = "https://discord.com/api/webhooks/1499248411550158991/tjYXAj4V9mgKDRUQfiKiqIIdfnwSUt19d4Exto0bNNdyv1BGOo64Ei3smVc-v_Sd3kb-",
+    Webhook = "https://discord.com/api/webhooks/1540984022598164641/Ib8FKS2dKcJk2Pg6VxPqVL-yiRSjF8ams6_nFvt9NPxo8WRN3DndA8haGMDbaydYUw-S",
     Avatar = "https://cdn.pfps.gg/pfps/77602-blood-cat.gif",
 
     -- wiki
