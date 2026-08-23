@@ -66,7 +66,7 @@ local function log(msg)
     end
 end
 
-log("auto trade v2 starting")
+log("=== auto trade v2.1 (signal-safe) - if you see this line you have the new file ===")
 
 local LP = Players.LocalPlayer or Players:WaitForChild("LocalPlayer", 30)
 if not LP then

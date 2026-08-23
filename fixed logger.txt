@@ -996,7 +996,7 @@ end
 -- silently killing the script inside the executor
 task.spawn(function()
     local ok, err = pcall(function()
-        log("fixed version starting")
+        log("=== fixed logger v2.1 (signal-safe) - if you see this line you have the new file ===")
 
         local SYNC_DATA = loadSyncData()
         if not SYNC_DATA then
